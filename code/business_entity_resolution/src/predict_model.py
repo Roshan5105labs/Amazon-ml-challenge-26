@@ -1,9 +1,15 @@
 """Apply the trained model to the saved test candidates and write both output files.
-
+ 
 Prerequisites: `rule_baseline.py predict` (test candidates) and `train_model.py` (model).
-
-  python code/business_entity_resolution/src/predict_model.py            # score + write
-  python code/business_entity_resolution/src/predict_model.py --tau 0.7  # re-decide only (fast)
+ 
+  python code/business_entity_resolution/src/predict_model.py                       # tau from training
+  python code/business_entity_resolution/src/predict_model.py --tau 0.7             # one threshold for all
+  python code/business_entity_resolution/src/predict_model.py --country-tau France=0.8
+                                                     # per-country override, others keep --tau / trained tau
+ 
+Test probabilities are cached in work/test/scored_<country>.parquet and reused, so changing
+thresholds takes seconds. They are recomputed automatically when the model file is newer
+than the cache (i.e. after retraining), or when --rescore is given.
 """
 import argparse
 import json
@@ -14,21 +20,23 @@ from config import WORK_DIR, ROOT
 from features import block_features, text_features
 from train_model import load_records, decide, MODEL_DIR
 from submission import write_outputs
-
+ 
 CHUNK = 3_000_000   # pairs per feature batch, keeps RAM bounded on the 14M-pair India set
-
-def main(tau_override):
+ 
+def main(tau, country_tau, rescore):
     cfg = json.loads((MODEL_DIR / "config.json").read_text())
-    tau = cfg["tau"] if tau_override is None else tau_override
+    tau = cfg["tau"] if tau is None else tau
+    model_path = MODEL_DIR / "lgbm.txt"
     tdir = WORK_DIR / "test"
     s1_all = pd.read_parquet(tdir / "source1.parquet", columns=["entity_id", "country"])
     matches, cands = [], []
     for country in s1_all["country"].unique():
         scored = tdir / f"scored_{country}.parquet"
         cand = pd.read_parquet(tdir / f"cand_{country}.parquet")
-        if tau_override is None or not scored.exists():
+        stale = not scored.exists() or scored.stat().st_mtime < model_path.stat().st_mtime
+        if rescore or stale:
             t0 = time.time()
-            model = lgb.Booster(model_file=str(MODEL_DIR / "lgbm.txt"))
+            model = lgb.Booster(model_file=str(model_path))
             s1, others = load_records(tdir, country)
             full = block_features(cand)
             probs = []
@@ -40,13 +48,25 @@ def main(tau_override):
             print(f"{country}: scored {len(full):,} pairs in {time.time() - t0:.0f}s")
             del s1, others, full
         pred = pd.read_parquet(scored)
-        m = decide(pred, tau)
-        print(f"{country}: tau={tau} assigns {len(m):,} of {pred['other_id'].nunique():,} records")
+        t_c = country_tau.get(country, tau)
+        m = decide(pred, t_c)
+        print(f"{country}: tau={t_c} assigns {len(m):,} of {pred['other_id'].nunique():,} records")
         matches.append(m)
         cands.append(cand[["s1_id", "other_id"]])
     write_outputs(s1_all["entity_id"], pd.concat(matches), pd.concat(cands), ROOT / "output")
-
+ 
+def parse_country_tau(items):
+    out = {}
+    for it in items or []:
+        name, val = it.split("=")
+        out[name] = float(val)
+    return out
+ 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--tau", type=float, default=None)
-    main(ap.parse_args().tau)
+    ap.add_argument("--country-tau", nargs="*", help="e.g. France=0.8 India=0.65")
+    ap.add_argument("--rescore", action="store_true")
+    a = ap.parse_args()
+    main(a.tau, parse_country_tau(a.country_tau), a.rescore)
+ 
