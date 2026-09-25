@@ -3,7 +3,7 @@
 student_resource/dataset/
 __pycache__/
 *.pyc
-
+work/
 __pycache__/
 *.py[codz]
 *$py.class
