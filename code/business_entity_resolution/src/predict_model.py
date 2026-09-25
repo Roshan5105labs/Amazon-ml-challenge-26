@@ -5,6 +5,7 @@ Prerequisites: `rule_baseline.py predict` (test candidates) and `train_model.py`
   python code/business_entity_resolution/src/predict_model.py                       # tau from training
   python code/business_entity_resolution/src/predict_model.py --tau 0.7             # one threshold for all
   python code/business_entity_resolution/src/predict_model.py --country-tau France=0.8
+  python code/business_entity_resolution/src/predict_model.py --cand cand2   # blocker-v2 model
                                                      # per-country override, others keep --tau / trained tau
  
 Test probabilities are cached in work/test/scored_<country>.parquet and reused, so changing
@@ -18,12 +19,13 @@ import pandas as pd
 import lightgbm as lgb
 from config import WORK_DIR, ROOT
 from features import block_features, text_features
-from train_model import load_records, decide, MODEL_DIR
+from train_model import load_records, decide, model_dir
 from submission import write_outputs
  
 CHUNK = 3_000_000   # pairs per feature batch, keeps RAM bounded on the 14M-pair India set
  
-def main(tau, country_tau, rescore):
+def main(tau, country_tau, rescore, cand_name):
+    MODEL_DIR = model_dir(cand_name)
     cfg = json.loads((MODEL_DIR / "config.json").read_text())
     tau = cfg["tau"] if tau is None else tau
     model_path = MODEL_DIR / "lgbm.txt"
@@ -31,8 +33,9 @@ def main(tau, country_tau, rescore):
     s1_all = pd.read_parquet(tdir / "source1.parquet", columns=["entity_id", "country"])
     matches, cands = [], []
     for country in s1_all["country"].unique():
-        scored = tdir / f"scored_{country}.parquet"
-        cand = pd.read_parquet(tdir / f"cand_{country}.parquet")
+        scored = tdir / (f"scored_{country}.parquet" if cand_name == "cand"
+                         else f"scored_{cand_name}_{country}.parquet")
+        cand = pd.read_parquet(tdir / f"{cand_name}_{country}.parquet")
         stale = not scored.exists() or scored.stat().st_mtime < model_path.stat().st_mtime
         if rescore or stale:
             t0 = time.time()
@@ -67,6 +70,8 @@ if __name__ == "__main__":
     ap.add_argument("--tau", type=float, default=None)
     ap.add_argument("--country-tau", nargs="*", help="e.g. France=0.8 India=0.65")
     ap.add_argument("--rescore", action="store_true")
+    ap.add_argument("--cand", default="cand", help="candidate set: cand (blocker v1) or cand2 (v2)")
     a = ap.parse_args()
-    main(a.tau, parse_country_tau(a.country_tau), a.rescore)
+    main(a.tau, parse_country_tau(a.country_tau), a.rescore, a.cand)
+ 
  

@@ -27,11 +27,15 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 from config import WORK_DIR
-from features import FEATURES, block_features, text_features
+from features import feature_list, block_features, text_features
 from metric import macro_f05
  
 REC_COLS = ["entity_id", "country", "business_name", "name_n", "addr_n"]
-MODEL_DIR = WORK_DIR / "model"
+def model_dir(cand_name: str):
+    """v1 candidates keep the original folder; other candidate sets get their own."""
+    return WORK_DIR / ("model" if cand_name == "cand" else f"model_{cand_name}")
+ 
+MODEL_DIR = model_dir("cand")
  
 def load_records(split_dir, country):
     f = [("country", "==", country)]
@@ -49,7 +53,8 @@ def decide(pred: pd.DataFrame, tau: float) -> pd.DataFrame:  # noqa: D401
     best = pred.sort_values("p", ascending=False).drop_duplicates("other_id")
     return best.loc[best["p"] >= tau, ["s1_id", "other_id"]]
  
-def main(train_frac, val_frac):
+def main(train_frac, val_frac, cand_name):
+    MODEL_DIR = model_dir(cand_name)
     tdir = WORK_DIR / "train"
     s1_all = pd.read_parquet(tdir / "source1.parquet", columns=["entity_id", "country"])
     gt_all = pd.read_parquet(tdir / "gt_pairs.parquet")
@@ -60,7 +65,7 @@ def main(train_frac, val_frac):
     train_parts, val_parts, val_s1 = [], [], []
     for country in s1_all["country"].unique():
         t0 = time.time()
-        tag = f"{country}_tr{train_frac}_va{val_frac}_v2"
+        tag = f"{country}_tr{train_frac}_va{val_frac}_v2_{cand_name}"
         f_tr, f_va, f_ids = (MODEL_DIR / f"feat_train_{tag}.parquet", MODEL_DIR / f"feat_val_{tag}.parquet",
                              MODEL_DIR / f"val_s1_{tag}.parquet")
         if f_tr.exists() and f_va.exists() and f_ids.exists():
@@ -69,7 +74,7 @@ def main(train_frac, val_frac):
             val_s1.append(pd.read_parquet(f_ids)["s1_id"])
             print(f"{country}: loaded cached features in {time.time() - t0:.0f}s")
             continue
-        cand = block_features(pd.read_parquet(tdir / f"cand_{country}.parquet"))
+        cand = block_features(pd.read_parquet(tdir / f"{cand_name}_{country}.parquet"))
         s1, others = load_records(tdir, country)
  
         # hold out Source 1 entities; evaluate on EVERY record that touches one of them
@@ -98,6 +103,8 @@ def main(train_frac, val_frac):
         del cand, s1, others
  
     train, val = pd.concat(train_parts, ignore_index=True), pd.concat(val_parts, ignore_index=True)
+    FEATURES = feature_list(train.columns)
+    print(f"candidate set '{cand_name}': {len(FEATURES)} features")
     val_s1 = pd.concat(val_s1, ignore_index=True)
     val_gt = gt_all[gt_all["s1_id"].isin(set(val_s1))]
     print(f"\ntrain: {len(train):,} pairs ({train['label'].mean():.3f} positive) | val: {len(val):,} pairs")
@@ -143,6 +150,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--train-frac", type=float, default=0.25)
     ap.add_argument("--val-frac", type=float, default=0.05)
+    ap.add_argument("--cand", default="cand", help="candidate set: cand (blocker v1) or cand2 (v2)")
     a = ap.parse_args()
-    main(a.train_frac, a.val_frac)
+    main(a.train_frac, a.val_frac, a.cand)
+ 
  
