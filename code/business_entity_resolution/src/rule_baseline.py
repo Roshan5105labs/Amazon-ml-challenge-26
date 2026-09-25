@@ -9,6 +9,10 @@ One owner at most per S2/S3 record, which the EDA showed is always true.
             (slow: full-test blocking; saves candidates to work/test/cand_<country>.parquet)
   decide:   python code/business_entity_resolution/src/rule_baseline.py decide --t 0.55 --m 0
             (fast: re-applies the rule to the saved candidates with new parameters)
+  fulltrain: python code/business_entity_resolution/src/rule_baseline.py fulltrain
+            (slow: runs the test-scale pipeline on ALL training data and scores it with
+             the ground truth; candidates saved to work/train/cand_<country>.parquet,
+             so an interrupted run resumes where it stopped)
 """
 import argparse
 import json
@@ -85,6 +89,46 @@ def predict():
         del s1, others, cand
     write_outputs(s1_all["entity_id"], pd.concat(matches), pd.concat(cands), ROOT / "output")
  
+def fulltrain():
+    """Test-scale evaluation: same blocking settings as predict, but on the full labelled
+    training set. Answers: does the dev-slice score survive full-country density?"""
+    tdir = WORK_DIR / "train"
+    s1_all = pd.read_parquet(tdir / "source1.parquet", columns=["entity_id", "country"])
+    gt_all = pd.read_parquet(tdir / "gt_pairs.parquet")
+    owner_country = gt_all["s1_id"].map(s1_all.set_index("entity_id")["country"])
+    grid = [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.8]
+    per_country = {}
+    for country in s1_all["country"].unique():
+        path = tdir / f"cand_{country}.parquet"
+        s1_ids = s1_all.loc[s1_all["country"] == country, "entity_id"]
+        if not path.exists():
+            t0 = time.time()
+            f = [("country", "==", country)]
+            s1 = pd.read_parquet(tdir / "source1.parquet", columns=COLS, filters=f)
+            others = pd.concat([pd.read_parquet(tdir / f"{s}.parquet", columns=COLS, filters=f)
+                                for s in ["source2", "source3"]], ignore_index=True)
+            block_country(s1, others, k=K).to_parquet(path, index=False)
+            print(f"{country}: blocked {len(others):,} records in {time.time() - t0:.0f}s")
+            del s1, others
+        cand = pd.read_parquet(path)
+        gt = gt_all[owner_country == country]
+        found = gt.merge(cand[["s1_id", "other_id"]], on=["s1_id", "other_id"])
+        n_q = cand["other_id"].nunique()
+        owned = cand["other_id"].drop_duplicates().isin(gt["other_id"]).mean()
+        print(f"\n{country}: pair recall@{K} {len(found) / len(gt):.4f} | "
+              f"oracle F0.5 {macro_f05(found, gt, s1_ids):.4f} | truly owned {owned:.3f}")
+        scores = []
+        for t in grid:
+            pred = decide(cand, t, 0.0)
+            scores.append(macro_f05(pred, gt, s1_ids))
+            print(f"  t={t:.2f}: F0.5 {scores[-1]:.4f} | assigns {len(pred) / n_q:.3f}")
+        per_country[country] = (len(s1_ids), scores)
+        del cand, found
+    n = sum(v[0] for v in per_country.values())
+    print("\nALL COUNTRIES (weighted by #S1):")
+    for i, t in enumerate(grid):
+        print(f"  t={t:.2f}: F0.5 {sum(v[0] * v[1][i] for v in per_country.values()) / n:.4f}")
+ 
 def redecide(t: float, m: float):
     """Re-apply the rule to candidates saved by predict (seconds instead of an hour)."""
     tdir = WORK_DIR / "test"
@@ -101,7 +145,7 @@ def redecide(t: float, m: float):
  
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["tune", "predict", "decide"])
+    ap.add_argument("mode", choices=["tune", "predict", "decide", "fulltrain"])
     ap.add_argument("--t", type=float, default=0.55)
     ap.add_argument("--m", type=float, default=0.0)
     a = ap.parse_args()
@@ -109,6 +153,8 @@ if __name__ == "__main__":
         tune()
     elif a.mode == "predict":
         predict()
+    elif a.mode == "fulltrain":
+        fulltrain()
     else:
         redecide(a.t, a.m)
  
