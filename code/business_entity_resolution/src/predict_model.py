@@ -21,10 +21,11 @@ from config import WORK_DIR, ROOT
 from features import block_features, text_features
 from train_model import load_records, decide, model_dir
 from submission import write_outputs
+from decision import decide_ef
  
 CHUNK = 3_000_000   # pairs per feature batch, keeps RAM bounded on the 14M-pair India set
  
-def main(tau, country_tau, rescore, cand_name):
+def main(tau, country_tau, rescore, cand_name, decision):
     MODEL_DIR = model_dir(cand_name)
     cfg = json.loads((MODEL_DIR / "config.json").read_text())
     tau = cfg["tau"] if tau is None else tau
@@ -51,9 +52,16 @@ def main(tau, country_tau, rescore, cand_name):
             print(f"{country}: scored {len(full):,} pairs in {time.time() - t0:.0f}s")
             del s1, others, full
         pred = pd.read_parquet(scored)
-        t_c = country_tau.get(country, tau)
-        m = decide(pred, t_c)
-        print(f"{country}: tau={t_c} assigns {len(m):,} of {pred['other_id'].nunique():,} records")
+        if decision == "ef":
+            dcfg = json.loads((MODEL_DIR / "decision.json").read_text())
+            t_c = country_tau.get(country, dcfg["tau_min"])   # --country-tau acts as tau_min here
+            m = decide_ef(pred, t_c, dcfg["beta"])
+            label = f"F0.5-aware (tau_min={t_c}, beta={dcfg['beta']})"
+        else:
+            t_c = country_tau.get(country, tau)
+            m = decide(pred, t_c)
+            label = f"tau={t_c}"
+        print(f"{country}: {label} assigns {len(m):,} of {pred['other_id'].nunique():,} records")
         matches.append(m)
         cands.append(cand[["s1_id", "other_id"]])
     write_outputs(s1_all["entity_id"], pd.concat(matches), pd.concat(cands), ROOT / "output")
@@ -71,7 +79,8 @@ if __name__ == "__main__":
     ap.add_argument("--country-tau", nargs="*", help="e.g. France=0.8 India=0.65")
     ap.add_argument("--rescore", action="store_true")
     ap.add_argument("--cand", default="cand", help="candidate set: cand (blocker v1) or cand2 (v2)")
+    ap.add_argument("--decision", choices=["tau", "ef"], default="tau",
+                    help="tau = per-record threshold; ef = F0.5-aware per entity (run tune_decision.py first)")
     a = ap.parse_args()
-    main(a.tau, parse_country_tau(a.country_tau), a.rescore, a.cand)
- 
+    main(a.tau, parse_country_tau(a.country_tau), a.rescore, a.cand, a.decision)
  
