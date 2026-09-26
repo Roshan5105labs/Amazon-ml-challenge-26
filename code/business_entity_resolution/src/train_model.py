@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 from config import WORK_DIR
-from features import feature_list, block_features, text_features
+from features import feature_list, block_features, text_features, _to_f32
 from metric import macro_f05
  
 REC_COLS = ["entity_id", "country", "business_name", "name_n", "addr_n"]
@@ -69,8 +69,8 @@ def main(train_frac, val_frac, cand_name):
         f_tr, f_va, f_ids = (MODEL_DIR / f"feat_train_{tag}.parquet", MODEL_DIR / f"feat_val_{tag}.parquet",
                              MODEL_DIR / f"val_s1_{tag}.parquet")
         if f_tr.exists() and f_va.exists() and f_ids.exists():
-            train_parts.append(pd.read_parquet(f_tr))
-            val_parts.append(pd.read_parquet(f_va))
+            train_parts.append(_to_f32(pd.read_parquet(f_tr)))
+            val_parts.append(_to_f32(pd.read_parquet(f_va)))
             val_s1.append(pd.read_parquet(f_ids)["s1_id"])
             print(f"{country}: loaded cached features in {time.time() - t0:.0f}s")
             continue

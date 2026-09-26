@@ -31,9 +31,17 @@ FEATURES_V2 = FEATURES + ["dice_addr", "dice_name", "gap_addr", "gap_name", "max
 def feature_list(cand_columns) -> list:
     return FEATURES_V2 if "dice_addr" in cand_columns else FEATURES
  
+def _to_f32(df: pd.DataFrame) -> pd.DataFrame:
+    """Store float columns as float32: halves memory, irrelevant for similarity features."""
+    cols = df.select_dtypes(include="float64").columns
+    if len(cols):
+        df[cols] = df[cols].astype(np.float32)
+    return df
+ 
 def block_features(cand: pd.DataFrame) -> pd.DataFrame:
-    """Context features from the full candidate set of one country."""
-    c = cand.copy()
+    """Context features from the full candidate set of one country.
+    Adds columns IN PLACE (no copy of the 50M-row table) and returns the same frame."""
+    c = cand
     if "dice_addr" in c.columns:
         c["max_dice"] = c[["dice_tok", "dice_addr", "dice_name"]].max(axis=1)
         for col, gap in [("dice_addr", "gap_addr"), ("dice_name", "gap_name"), ("max_dice", "gap_max")]:
@@ -46,7 +54,7 @@ def block_features(cand: pd.DataFrame) -> pd.DataFrame:
     c["s1_support"] = c["s1_id"].map(c.loc[c["rank"] == 0, "s1_id"].value_counts()).fillna(0)
     c["s1_ncand"] = c.groupby("s1_id")["dice"].transform("size")
     c["is_s2"] = c["other_id"].str.startswith("S2-").astype(np.int8)
-    return c
+    return _to_f32(c)
  
 def _pairwise(a, b, scorer, **kw):
     return process.cpdist(a, b, scorer=scorer, workers=-1, dtype=np.float32, **kw)
@@ -95,5 +103,5 @@ def text_features(pairs: pd.DataFrame, s1: pd.DataFrame, others: pd.DataFrame) -
     o_first = others["addr_n"].str.extract(r"(\d+)", expand=False).to_numpy()[oi]
     f["first_num_eq"] = np.where(pd.isna(o_first) | pd.isna(s_first), -1,
                                  (o_first == s_first).astype(np.int8)).astype(np.int8)
-    return f
+    return _to_f32(f)
  
