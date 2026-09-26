@@ -6,3 +6,4 @@ v4 | LightGBM tau=0.6 | offline 0.932 (rule 0.774) | 0.903|
 v6 | LightGBM + blocker v2, France 0.8 | offline 0.9458 | LB ?
 v7                                                      0.923
 v8 | + script translation, France 0.9 | offline 0.9512 | LB 0.929 | France est. ~0.83 (unchanged)v9 | India k=6 (cand3), tau=0.7, France 0.9 | offline 0.9553 (India 0.941) | LB ?
+v12 | v3 features (number detail + name ambiguity), cand5, France 0.9 | offline 0.9581 | LB ?
