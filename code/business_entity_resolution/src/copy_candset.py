@@ -10,13 +10,15 @@ import argparse
 import shutil
 from config import WORK_DIR
 
-def main(src, dst, countries):
+def main(src, dst, countries, features=True):
     for split in ["train", "test"]:
         for c in countries:
             f = WORK_DIR / split / f"{src}_{c}.parquet"
             if f.exists():
                 shutil.copy2(f, WORK_DIR / split / f"{dst}_{c}.parquet")
                 print(f"copied {split}/{f.name} -> {dst}_{c}.parquet")
+    if not features:
+        return
     m_src, m_dst = WORK_DIR / f"model_{src}", WORK_DIR / f"model_{dst}"
     m_dst.mkdir(parents=True, exist_ok=True)
     for c in countries:
@@ -30,5 +32,6 @@ if __name__ == "__main__":
     ap.add_argument("--src", default="cand2")
     ap.add_argument("--dst", default="cand3")
     ap.add_argument("--countries", nargs="+", default=["US", "France"])
+    ap.add_argument("--no-features", action="store_true", help="do not copy cached training features")
     a = ap.parse_args()
-    main(a.src, a.dst, a.countries)
+    main(a.src, a.dst, a.countries, not a.no_features)

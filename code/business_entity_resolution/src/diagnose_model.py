@@ -34,7 +34,7 @@ def load(cand):
     cols = feats + ["other_id", "s1_id", "label", "country"]
     tr, va, vs1 = [], [], []
     for country in ["US", "India"]:
-        tag = f"{country}_tr{cfg['train_frac']}_va{cfg['val_frac']}_v2_{cand}"
+        tag = f"{country}_tr{cfg['train_frac']}_va{cfg['val_frac']}_{cfg.get('feat_tag', 'v2')}_{cand}"
         tr.append(pd.read_parquet(mdir / f"feat_train_{tag}.parquet", columns=cols))
         va.append(pd.read_parquet(mdir / f"feat_val_{tag}.parquet", columns=cols))
         vs1.append(pd.read_parquet(mdir / f"val_s1_{tag}.parquet").assign(country=country))

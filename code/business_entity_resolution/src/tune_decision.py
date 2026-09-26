@@ -23,7 +23,7 @@ def val_predictions(mdir, cfg):
     feats = cfg["features"]
     parts = []
     for country in ["US", "India"]:
-        tag = f"{country}_tr{cfg['train_frac']}_va{cfg['val_frac']}_v2_{mdir.name.replace('model_', '')}"
+        tag = f"{country}_tr{cfg['train_frac']}_va{cfg['val_frac']}_{cfg.get('feat_tag', 'v2')}_{mdir.name.replace('model_', '')}"
         v = pd.read_parquet(mdir / f"feat_val_{tag}.parquet", columns=feats + ["other_id", "s1_id"])
         v["p"] = model.predict(v[feats])
         parts.append(v[["other_id", "s1_id", "p"]].assign(country=country))
